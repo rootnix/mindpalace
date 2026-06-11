@@ -1,0 +1,5 @@
+{
+  "name": "mindpalace",
+  "description": "Global cross-tool engineering wiki at ~/.mindpalace — read project context at session start, write durable knowledge back via the mp CLI",
+  "version": "0.2.0"
+}

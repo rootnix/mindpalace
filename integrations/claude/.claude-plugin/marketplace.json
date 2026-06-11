@@ -1,0 +1,11 @@
+{
+  "name": "mindpalace-local",
+  "owner": { "name": "rootnix" },
+  "plugins": [
+    {
+      "name": "mindpalace",
+      "source": "./mindpalace",
+      "description": "Global cross-tool engineering wiki (~/.mindpalace): session-start context injection, write-back nudge, and the mp CLI skill"
+    }
+  ]
+}
