@@ -67,6 +67,24 @@ without dates. mindpalace bakes the countermeasures into the tool:
 5. **Nothing new learned → write nothing** — the stop-nudge accepts "nothing
    durable" as an answer.
 
+## Backfill — import your pre-mindpalace sessions
+
+Knowledge from sessions that happened *before* you installed mindpalace is
+still on disk (Claude Code and Codex keep full transcripts). One command
+prepares it for the wiki:
+
+```sh
+cd myproject && mp backfill        # or --limit 10 for the most recent N
+```
+
+This finds every past Claude Code / Codex session for the project, strips
+tool noise into compact chronological digests under
+`~/.mindpalace/.backfill/<slug>/`, and prints a ready-to-paste prompt.
+Paste that prompt into your agent: it reads the digests and distills the
+durable knowledge into the wiki via `mp edit` / `mp log` (mp itself has no
+LLM — it prepares the material, your agent does the judgment). Finish with
+`mp backfill --clean`.
+
 ## Team usage — `mp share`
 
 Run `mp share` inside a project repo to make that project's wiki shared:

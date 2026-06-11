@@ -22,6 +22,9 @@ Commands:
                                <repo>/.mindpalace (versioned with the repo),
                                seeds it from your global wiki; communal pages
                                + per-person journals (no merge conflicts)
+  mp backfill [--limit N]      extract this project's PRE-mindpalace agent
+                               sessions (Claude Code, Codex) into digests +
+                               a distillation prompt; --clean removes digests
   mp upgrade                   update the mindpalace installation (git pull)
 
 Wiki root: ~/.mindpalace (override with MINDPALACE_ROOT).
@@ -510,6 +513,159 @@ def cmd_upgrade(_args: list[str]) -> None:
     sys.exit(rc)
 
 
+
+# ── backfill: import pre-mindpalace sessions ─────────────────────────────────
+
+_NOISE_RES = (
+    re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL),
+    re.compile(r"<environment_context>.*?</environment_context>", re.DOTALL),
+)
+_USER_MSG_CAP = 1500
+_ASSISTANT_MSG_CAP = 2500
+_DIGEST_CAP = 60_000
+
+
+def _clip(text: str, cap: int) -> str:
+    for rx in _NOISE_RES:
+        text = rx.sub("", text)
+    text = text.strip()
+    return text if len(text) <= cap else text[:cap] + " …[truncated]"
+
+
+def _digest_claude(path: Path) -> list[tuple[str, str, str]]:
+    """[(timestamp, role, text)] from a Claude Code session transcript."""
+    import json
+    turns = []
+    for line in path.open(encoding="utf-8", errors="replace"):
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("type") not in ("user", "assistant") or o.get("isSidechain"):
+            continue
+        content = (o.get("message") or {}).get("content")
+        if isinstance(content, str):
+            texts = [content]
+        elif isinstance(content, list):
+            texts = [b.get("text", "") for b in content if b.get("type") == "text"]
+        else:
+            continue
+        cap = _USER_MSG_CAP if o["type"] == "user" else _ASSISTANT_MSG_CAP
+        text = _clip("\n".join(t for t in texts if t), cap)
+        if text:
+            turns.append((str(o.get("timestamp", ""))[:16], o["type"], text))
+    return turns
+
+
+def _digest_codex(path: Path) -> list[tuple[str, str, str]]:
+    """[(timestamp, role, text)] from a Codex rollout transcript."""
+    import json
+    turns = []
+    for line in path.open(encoding="utf-8", errors="replace"):
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        p = o.get("payload") or {}
+        if o.get("type") != "response_item" or p.get("type") != "message":
+            continue
+        role = p.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        texts = [b.get("text", "") for b in p.get("content") or []
+                 if b.get("type") in ("input_text", "output_text")]
+        cap = _USER_MSG_CAP if role == "user" else _ASSISTANT_MSG_CAP
+        text = _clip("\n".join(t for t in texts if t), cap)
+        if text and "<user_instructions>" not in text:
+            turns.append((str(o.get("timestamp", ""))[:16], role, text))
+    return turns
+
+
+def _find_sessions(git_root: Path) -> list[tuple[str, Path]]:
+    """[(tool, transcript_path)] for this project, oldest first by mtime."""
+    import json
+    found: list[tuple[str, Path]] = []
+    claude_dir = Path.home() / ".claude" / "projects" / re.sub(
+        r"[^A-Za-z0-9]", "-", str(git_root))
+    if claude_dir.is_dir():
+        found += [("claude", f) for f in claude_dir.glob("*.jsonl")]
+    codex_root = Path.home() / ".codex" / "sessions"
+    prefix = str(git_root)
+    for f in codex_root.glob("**/*.jsonl") if codex_root.is_dir() else []:
+        try:
+            meta = json.loads(f.open(encoding="utf-8", errors="replace").readline())
+        except (json.JSONDecodeError, OSError):
+            continue
+        cwd = str((meta.get("payload") or {}).get("cwd", ""))
+        if meta.get("type") == "session_meta" and (
+                cwd == prefix or cwd.startswith(prefix + "/")):
+            found.append(("codex", f))
+    return sorted(found, key=lambda t: t[1].stat().st_mtime)
+
+
+def cmd_backfill(args: list[str]) -> None:
+    """Extract pre-mindpalace session transcripts into digests an agent can
+    distill into the wiki. mp has no LLM — it prepares the material and the
+    prompt; your agent does the judgment."""
+    slug = _resolve_slug([])
+    out_dir = ROOT / ".backfill" / slug
+    if "--clean" in args:
+        if out_dir.is_dir():
+            shutil.rmtree(out_dir)
+            print(f"removed {out_dir}")
+        else:
+            print("nothing to clean")
+        return
+    limit = 0
+    if "--limit" in args:
+        try:
+            limit = int(args[args.index("--limit") + 1])
+        except (IndexError, ValueError):
+            _die("usage: mp backfill [--limit N] [--clean]")
+
+    git_root = _git_root(Path.cwd()) or _die("not in a git repo")
+    sessions = _find_sessions(git_root)
+    if limit:
+        sessions = sessions[-limit:]
+    if not sessions:
+        _die("no Claude Code / Codex transcripts found for this project")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for i, (tool, f) in enumerate(sessions, 1):
+        turns = _digest_claude(f) if tool == "claude" else _digest_codex(f)
+        if not turns:
+            continue
+        lines = [f"# session digest — {tool} — {turns[0][0]} → {turns[-1][0]}",
+                 f"source: {f}", ""]
+        size = 0
+        for ts, role, text in turns:
+            block = f"## [{role}] {ts}\n{text}\n"
+            if size + len(block) > _DIGEST_CAP:
+                lines.append("…[digest truncated at cap]")
+                break
+            lines.append(block)
+            size += len(block)
+        name = f"{i:03d}-{tool}-{(turns[0][0] or 'undated')[:10]}.md"
+        (out_dir / name).write_text("\n".join(lines), encoding="utf-8")
+        written += 1
+    print(f"{written} session digest(s) → {out_dir}\n")
+    print("─" * 62)
+    print(f"""Paste this into your agent (Claude Code, Codex, ...):
+
+Backfill the mindpalace wiki for project '{slug}' from pre-mindpalace
+session digests at {out_dir} ({written} files, chronological).
+First run `mp context` and `mp list` to see the current wiki. Then read
+the digests in order and distill ONLY durable knowledge:
+- decisions, constraints, gotchas, architecture rationale -> `mp edit`
+  diff-edits into existing pages (or `mp write` for a genuinely new page)
+- dated events worth remembering -> `mp log`, quoting the original date
+- skip anything the code already says, session chatter, one-off debugging
+Date every claim with (observed YYYY-MM-DD) from the digest timestamps.
+When done, run `mp backfill --clean` to delete the digests.""")
+    print("─" * 62)
+
+
 COMMANDS = {
     "init": cmd_init,
     "init-project": _init_project,  # back-compat alias
@@ -523,6 +679,7 @@ COMMANDS = {
     "edit": cmd_edit,
     "log": cmd_log,
     "share": cmd_share,
+    "backfill": cmd_backfill,
     "upgrade": cmd_upgrade,
 }
 
