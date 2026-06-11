@@ -34,15 +34,29 @@ if not dirty:
     sys.exit(0)
 
 recent = False
-for p in root.rglob("*.md"):
-    if ".git" in p.parts:
-        continue
-    try:
-        if time.time() - p.stat().st_mtime < 6 * 3600:
-            recent = True
-            break
-    except OSError:
-        pass
+scan_roots = [root]
+# shared in-repo store (mp share): writes land in <repo>/.mindpalace
+try:
+    top = subprocess.run(
+        ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=5,
+    ).stdout.strip()
+    if top and (Path(top) / ".mindpalace").is_dir():
+        scan_roots.append(Path(top) / ".mindpalace")
+except Exception:
+    pass
+for r in scan_roots:
+    for p in r.rglob("*.md"):
+        if ".git" in p.parts:
+            continue
+        try:
+            if time.time() - p.stat().st_mtime < 6 * 3600:
+                recent = True
+                break
+        except OSError:
+            pass
+    if recent:
+        break
 marker.write_text("")
 if recent:
     sys.exit(0)

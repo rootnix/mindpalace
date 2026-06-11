@@ -50,6 +50,16 @@ what the code already says.
 - New cross-project theme → new `topics/<name>.md` + add a line to `index.md`.
 - Nothing durable learned → write nothing.
 
+## Shared in-repo store (`mp share`)
+If the repo contains `.mindpalace/`, the project's wiki is SHARED — versioned
+with the repo itself, used by every teammate's agents. mp commands switch to
+it automatically: `mp context` reads it, `mp log` writes to YOUR
+`journal/<user>.md` (per-person — never merge-conflicts), `mp edit
+<page>.md ...` updates communal top-level pages (index.md, decisions.md, ...).
+Commit `.mindpalace/` changes together with the code changes they belong to.
+To convert a solo project: `mp share` (seeds from the global wiki).
+Global `topics/` still works from inside a shared repo.
+
 ## Discipline (non-negotiable)
 1. Diff edits over rewrites.
 2. Provenance dates on claims.

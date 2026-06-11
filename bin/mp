@@ -57,6 +57,8 @@ _LOCAL_PAGE_RE = re.compile(r"^(journal/)?[A-Za-z0-9._\- ]+\.md$")
 
 def _safe_page(page: str) -> Path:
     page = page.strip().lstrip("/")
+    if page.startswith(".mindpalace/"):
+        page = page[len(".mindpalace/"):]  # accept `mp list` output verbatim
     store = _local_store()
     if store and not page.startswith(("topics/", "projects/")):
         # shared in-repo store: top-level pages + journal/<user>.md
@@ -224,11 +226,16 @@ def cmd_search(args: list[str]) -> None:
 
 
 def cmd_list(args: list[str]) -> None:
+    store = _local_store() if not args else None
+    if store:
+        for path in sorted(store.rglob("*.md")):
+            print(f".mindpalace/{path.relative_to(store)}")
     base = ROOT / "projects" / args[0] if args else ROOT
-    for path in sorted(base.rglob("*.md")):
-        rel = str(path.relative_to(ROOT))
-        if not rel.startswith(".git/"):
-            print(rel)
+    if base.exists():
+        for path in sorted(base.rglob("*.md")):
+            rel = str(path.relative_to(ROOT))
+            if not rel.startswith(".git/"):
+                print(rel)
 
 
 def cmd_read(args: list[str]) -> None:
@@ -355,6 +362,10 @@ and other agents — read it for context, write durable knowledge back.
 - Discipline: diff edits only; date claims "(observed YYYY-MM-DD)"; fix
   stale content in place; the journal is an inbox — distill recurring
   themes into pages; nothing durable learned → write nothing.
+- If the repo contains `.mindpalace/` (a SHARED team wiki versioned with
+  the repo), mp commands use it automatically: top-level pages are
+  communal, `journal/<user>.md` is yours. Commit wiki changes with your
+  code changes.
 <!-- MINDPALACE_END -->
 """
 
