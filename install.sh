@@ -19,12 +19,15 @@ else
 fi
 chmod +x "$INSTALL_DIR/bin/mp" "$INSTALL_DIR"/integrations/claude/mindpalace/hooks/*.sh
 
-# put `mp` on PATH: prefer an existing writable bin dir
-BIN_DIR=""
-for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
-  if [ -d "$d" ] && [ -w "$d" ]; then BIN_DIR="$d"; break; fi
-done
-[ -n "$BIN_DIR" ] || { BIN_DIR="$HOME/.local/bin"; mkdir -p "$BIN_DIR"; }
+# put `mp` on PATH: prefer an existing writable bin dir (override: MP_BIN_DIR)
+BIN_DIR="${MP_BIN_DIR:-}"
+if [ -z "$BIN_DIR" ]; then
+  for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+    if [ -d "$d" ] && [ -w "$d" ]; then BIN_DIR="$d"; break; fi
+  done
+fi
+[ -n "$BIN_DIR" ] || BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
 ln -sf "$INSTALL_DIR/bin/mp" "$BIN_DIR/mp"
 echo "linked mp -> $BIN_DIR/mp"
 case ":$PATH:" in
