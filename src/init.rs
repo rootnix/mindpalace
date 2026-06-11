@@ -174,7 +174,7 @@ pub fn integrations() -> Vec<Integration> {
     ]
 }
 
-fn install_block(target: &PathBuf, block: &str, dry: bool) -> String {
+fn install_block(target: &std::path::Path, block: &str, dry: bool) -> String {
     // Strict read: this is read-modify-write on a file we don't own — never
     // rewrite a user's AGENTS.md with U+FFFD replacements or truncate it.
     let existing = if target.exists() {
@@ -213,7 +213,7 @@ fn same_content(target: &std::path::Path, content: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn install_rules(target: &PathBuf, dry: bool) -> String {
+fn install_rules(target: &std::path::Path, dry: bool) -> String {
     let content = format!("{}\n", MP_BLOCK.trim());
     if target.exists() && same_content(target, &content) {
         return "already integrated".into();
@@ -260,7 +260,7 @@ fn install_claude_plugin(dry: bool) -> String {
     )
 }
 
-fn tilde(p: &PathBuf) -> String {
+fn tilde(p: &std::path::Path) -> String {
     let h = home().to_string_lossy().into_owned();
     p.to_string_lossy().replacen(&h, "~", 1)
 }
