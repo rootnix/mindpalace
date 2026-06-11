@@ -1,0 +1,45 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: mp-macos-arm64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            asset: mp-macos-x64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: mp-linux-x64
+            musl: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: mp-linux-arm64
+            musl: true
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            asset: mp-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: stage asset
+        shell: bash
+        run: |
+          BIN=target/${{ matrix.target }}/release/mp
+          [ "${{ runner.os }}" = "Windows" ] && BIN="$BIN.exe"
+          cp "$BIN" "${{ matrix.asset }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

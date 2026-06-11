@@ -3,14 +3,14 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session_start.sh" }
+          { "type": "command", "command": "mp hook session-start || exit 0" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop_nudge.sh" }
+          { "type": "command", "command": "mp hook stop || exit 0" }
         ]
       }
     ]

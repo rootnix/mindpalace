@@ -1,0 +1,19 @@
+[package]
+name = "mindpalace"
+version = "0.3.0"
+edition = "2021"
+description = "mp — a global engineering wiki for AI coding agents"
+license = "Apache-2.0"
+repository = "https://github.com/rootnix/mindpalace"
+
+[[bin]]
+name = "mp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

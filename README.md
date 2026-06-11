@@ -17,10 +17,24 @@ agent reads at session start and writes back to as it works.
 
 ## Install
 
+Single static binary — no runtime dependencies (git is used for repo-aware
+features). macOS, Linux, and Windows.
+
 ```sh
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/rootnix/mindpalace/main/install.sh | sh
 mp init -g
 ```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/rootnix/mindpalace/main/install.ps1 | iex
+mp init -g
+```
+
+Prebuilt binaries: macOS (arm64/x64), Linux (x64/arm64, static musl),
+Windows (x64) — the installer picks the right one and falls back to a
+`cargo` source build on anything else.
 
 `mp init -g` creates your wiki and auto-detects every installed agent tool:
 
@@ -66,7 +80,7 @@ mp log "<note>"              # dated quick note to the project journal
 mp edit <page> <old> <new>   # exact-unique string replacement (THE update tool)
 mp write <page>              # new page from stdin
 mp init                      # scaffold projects/<slug>/ for the current repo
-mp upgrade                   # update mindpalace itself
+mp upgrade                   # update mindpalace (repo + binary self-update)
 ```
 
 Project slug resolves from the git root name, or a `.mindpalace-project`
@@ -135,7 +149,7 @@ topics; add a private remote to back it up.
 
 ## Requirements
 
-git, python3 (stdlib only — no dependencies).
+git. That's it — `mp` is a single static Rust binary.
 
 ## License
 
