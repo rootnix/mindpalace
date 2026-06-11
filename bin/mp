@@ -18,6 +18,10 @@ Commands:
   mp write <page> [--force]    create a page from stdin (refuses overwrite without --force)
   mp edit <page> <old> <new>   exact-unique string replacement (THE update tool)
   mp log [slug] <note...>      append a dated entry to the project journal
+  mp share                     make this project's wiki SHARED: creates
+                               <repo>/.mindpalace (versioned with the repo),
+                               seeds it from your global wiki; communal pages
+                               + per-person journals (no merge conflicts)
   mp upgrade                   update the mindpalace installation (git pull)
 
 Wiki root: ~/.mindpalace (override with MINDPALACE_ROOT).
@@ -48,8 +52,17 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+_LOCAL_PAGE_RE = re.compile(r"^(journal/)?[A-Za-z0-9._\- ]+\.md$")
+
+
 def _safe_page(page: str) -> Path:
     page = page.strip().lstrip("/")
+    store = _local_store()
+    if store and not page.startswith(("topics/", "projects/")):
+        # shared in-repo store: top-level pages + journal/<user>.md
+        if ".." in page or not _LOCAL_PAGE_RE.match(page):
+            _die(f"invalid page path for the shared store: {page!r}")
+        return store / page
     if page in ("index.md", "README.md"):
         return ROOT / page
     if ".." in page or not _PAGE_RE.match(page):
@@ -70,6 +83,33 @@ def _git_root(cwd: Path) -> Path | None:
     return None
 
 
+def _local_store(cwd: Path | None = None) -> Path | None:
+    """In-repo shared store: <git root>/.mindpalace, if present.
+
+    When a project has been `mp share`d, its wiki lives inside the repo and
+    rides the project's own git — pages are communal (diff edits), journals
+    are per-person (journal/<user>.md) so the append hot-path never conflicts.
+    """
+    root = _git_root(cwd or Path.cwd())
+    if root:
+        store = root / ".mindpalace"
+        if store.is_dir():
+            return store
+    return None
+
+
+def _username() -> str:
+    try:
+        out = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, timeout=5,
+        )
+        name = out.stdout.strip()
+    except Exception:
+        name = ""
+    name = name or os.environ.get("USER", "anon")
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-").lower() or "anon"
+
+
 def _resolve_slug(args: list[str]) -> str:
     if args:
         return args[0]
@@ -87,6 +127,31 @@ def cmd_project(_args: list[str]) -> None:
 
 
 def cmd_context(args: list[str]) -> None:
+    store = _local_store() if not args else None
+    if store:
+        idx = store / "index.md"
+        if idx.exists():
+            print("## mindpalace (shared, in-repo): .mindpalace/index.md")
+            print(idx.read_text().strip()[:3000])
+        pages = sorted(
+            p.name for p in store.glob("*.md")
+            if p.name not in ("index.md", "README.md")
+        )
+        if pages:
+            print("\n## mindpalace: other pages — read with `mp read <page>`")
+            print(", ".join(pages))
+        entries: list[str] = []
+        for j in sorted(store.glob("journal/*.md")):
+            who = j.stem
+            entries += [
+                f"{l} [{who}]" for l in j.read_text().splitlines()
+                if l.startswith("- ")
+            ]
+        if entries:
+            entries.sort()  # dated entries sort chronologically
+            print("\n## mindpalace: recent journal (all members)")
+            print("\n".join(entries[-8:]))
+        return
     slug = _resolve_slug(args)
     pdir = ROOT / "projects" / slug
     if not pdir.exists():
@@ -120,13 +185,27 @@ def cmd_search(args: list[str]) -> None:
         _die("usage: mp search <query...> [-p slug]")
     query = " ".join(args)
     base = ROOT / "projects" / proj if proj else ROOT
-    if not base.exists():
+    targets: list[tuple[Path, Path, str]] = []  # (base, root_for_rel, prefix)
+    store = _local_store() if not proj else None
+    if store:
+        targets.append((store, store, ".mindpalace/"))
+    if base.exists():
+        targets.append((base, ROOT, ""))
+    if not targets:
         _die("wiki not initialized — run `mp init -g`")
     hits: dict[str, list[str]] = {}
     terms = [t.lower() for t in query.split()]
-    for path in sorted(base.rglob("*.md")):
-        rel = str(path.relative_to(ROOT))
-        if rel.startswith(".git/"):
+    seen_paths: set = set()
+    walk = [
+        (path, prefix + str(path.relative_to(rroot)))
+        for b, rroot, prefix in targets
+        for path in sorted(b.rglob("*.md"))
+    ]
+    for path, rel in walk:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        if "/.git/" in str(path) or rel.startswith(".git/"):
             continue
         try:
             lines = path.read_text(errors="replace").splitlines()
@@ -197,6 +276,20 @@ def cmd_edit(args: list[str]) -> None:
 def cmd_log(args: list[str]) -> None:
     if not args:
         _die("usage: mp log [slug] <note...>")
+    store = _local_store()
+    if store:
+        note = " ".join(args)
+        jdir = store / "journal"
+        jdir.mkdir(exist_ok=True)
+        journal = jdir / f"{_username()}.md"
+        if not journal.exists():
+            journal.write_text(
+                f"# journal — {_username()}\n\nDated quick notes; distill durable ones into the shared pages.\n\n"
+            )
+        with journal.open("a") as f:
+            f.write(f"- {_today()}: {note}\n")
+        print(f"logged to .mindpalace/journal/{_username()}.md (commit with your changes)")
+        return
     if (ROOT / "projects" / args[0]).exists() and len(args) > 1:
         slug, note = args[0], " ".join(args[1:])
     else:
@@ -338,6 +431,66 @@ def cmd_init(args: list[str]) -> None:
         _init_project(args)
 
 
+_SHARE_README = """\
+# .mindpalace — shared project wiki
+
+This project's knowledge base, versioned WITH the project. Every team
+member's coding agents read it at session start and write back as they work.
+
+Rules:
+- Pages at the top level (index.md, decisions.md, gotchas.md, ...) are
+  COMMUNAL — anyone updates them via `mp edit` (exact-unique diff edits;
+  never rewrite whole pages). Date claims "(observed YYYY-MM-DD)".
+- `journal/<user>.md` is PERSONAL — `mp log` writes only to your own file,
+  so the append hot-path never merge-conflicts.
+- Distill recurring journal themes into the communal pages.
+- Cross-project knowledge belongs in your global wiki (`topics/`), not here.
+"""
+
+
+def cmd_share(_args: list[str]) -> None:
+    """Create <git root>/.mindpalace and seed it from your global wiki."""
+    root = _git_root(Path.cwd())
+    if not root:
+        _die("not inside a git repo")
+    store = root / ".mindpalace"
+    if store.exists():
+        _die(".mindpalace already exists in this repo — it is already shared")
+    slug = _resolve_slug([])
+    store.mkdir()
+    (store / "journal").mkdir()
+    (store / "README.md").write_text(_SHARE_README)
+
+    seeded = []
+    gdir = ROOT / "projects" / slug
+    if gdir.exists():
+        for p in sorted(gdir.glob("*.md")):
+            if p.name == "journal.md":
+                dst = store / "journal" / f"{_username()}.md"
+            else:
+                dst = store / p.name
+            shutil.copy(p, dst)
+            seeded.append(dst.relative_to(store))
+        # breadcrumb: global copy goes dormant, in-repo store is canonical
+        (gdir / "index.md").write_text(
+            f"# {slug} (shared)\n\nThis project's wiki moved INTO the repo: "
+            f"`<repo>/.mindpalace/` (canonical since {_today()}). `mp` commands "
+            f"run inside the repo use it automatically.\n"
+        )
+    if not (store / "index.md").exists():
+        (store / "index.md").write_text(
+            f"# {slug}\n\n(one-paragraph: what this project is)\n\n## Key facts\n"
+        )
+
+    print(f"shared store created: {store}")
+    if seeded:
+        print("seeded from your global wiki: " + ", ".join(str(s) for s in seeded))
+    print("\nnext:")
+    print(f"  git -C {root} add .mindpalace && git commit")
+    print("  teammates: install mindpalace (`mp init -g`) — inside this repo,")
+    print("  mp context/log/edit automatically use the shared store.")
+
+
 def cmd_upgrade(_args: list[str]) -> None:
     if not (INSTALL_DIR / ".git").exists():
         _die(f"{INSTALL_DIR} is not a git checkout — reinstall via the install script")
@@ -358,6 +511,7 @@ COMMANDS = {
     "write": cmd_write,
     "edit": cmd_edit,
     "log": cmd_log,
+    "share": cmd_share,
     "upgrade": cmd_upgrade,
 }
 

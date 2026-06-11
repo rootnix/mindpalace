@@ -26,6 +26,12 @@ Layout: `projects/<slug>/` (per-project: index.md, journal.md, decisions.md,
 gotchas.md, ...) and `topics/` (cross-project: aws.md, postgres.md, ...).
 Project slug resolves from the git root name or a `.mindpalace-project` marker file.
 
+SHARED MODE: if the repo contains `.mindpalace/` (created by `mp share`), all
+mp commands automatically use that in-repo store instead — pages are communal
+(top-level, e.g. `mp read index.md`), journals are per-person
+(`journal/<user>.md`; `mp log` handles this). Commit `.mindpalace/` changes
+together with the work that produced them.
+
 ## When to READ
 - Task mentions another project, shared infra, or past decisions → `mp search`.
 - Session start context (auto-injected) names pages — read the relevant ones

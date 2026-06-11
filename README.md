@@ -67,10 +67,31 @@ without dates. mindpalace bakes the countermeasures into the tool:
 5. **Nothing new learned → write nothing** — the stop-nudge accepts "nothing
    durable" as an answer.
 
-## Team usage
+## Team usage — `mp share`
 
-`~/.mindpalace` is its own git repo. Solo: add a private remote for backup.
-Team: share one remote — everyone's agents read and write the same palace.
+Run `mp share` inside a project repo to make that project's wiki shared:
+
+```sh
+cd myproject && mp share
+git add .mindpalace && git commit
+```
+
+This creates `<repo>/.mindpalace/`, **versioned with the project itself** —
+no extra remote, no sync daemon; the wiki travels with the repo and is
+reviewable in PRs. It seeds from whatever the first sharer's global wiki
+already knows about the project.
+
+The conflict model:
+- **Communal pages** (`index.md`, `decisions.md`, ...) — anyone edits via
+  `mp edit` (diff edits merge cleanly; same-line collisions are ordinary,
+  rare git conflicts).
+- **Personal journals** (`journal/<user>.md`) — `mp log` writes only to your
+  own file, so the append hot-path never conflicts.
+
+Inside a shared repo, `mp context` / `log` / `edit` / `search` use the
+in-repo store automatically (search also spans your global `topics/`).
+Your global `~/.mindpalace` remains for solo projects and cross-project
+topics; add a private remote to back it up.
 
 ## Requirements
 
