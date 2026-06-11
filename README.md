@@ -99,4 +99,4 @@ git, python3 (stdlib only — no dependencies).
 
 ## License
 
-MIT
+Apache-2.0
