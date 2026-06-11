@@ -6,8 +6,14 @@ One wiki at ~/.mindpalace, shared by every coding agent (Claude Code, Codex,
 write durable knowledge back as they work. Stdlib only.
 
 Commands:
-  mp init -g [--dry-run]       global setup: create the wiki, detect agent
-                               tools, install integrations (run once per machine)
+  mp init -g [--dry-run]       global setup: create the wiki, detect installed
+                               agent tools, install all integrations. Supported:
+                               claude, codex, gemini, copilot, antigravity,
+                               windsurf, pi, hermes, cline, roo, kilocode
+  mp init -g --agent <name>    install one integration (even if not detected)
+  mp init --agent <name>       project-scoped integration file, versioned with
+                               the repo (cursor, cline, roo, kilocode, windsurf)
+  mp init --list               support matrix + per-tool integration status
   mp init [slug]               scaffold projects/<slug>/ for the current repo
   mp project                   resolve current project slug (git root name)
   mp context [slug]            project index + recent journal (session-start injection)
@@ -348,13 +354,13 @@ def _run(cmd: list[str], dry: bool) -> tuple[int, str]:
         return 1, str(exc)
 
 
-_CODEX_BLOCK = """
+_MP_BLOCK = """
 
 <!-- MINDPALACE_START -->
 ## mindpalace — global engineering wiki
 
-One cross-tool wiki at `~/.mindpalace` (CLI: `mp`), shared with Claude Code
-and other agents — read it for context, write durable knowledge back.
+One cross-tool wiki at `~/.mindpalace` (CLI: `mp`), shared by all your
+coding agents — read it for context, write durable knowledge back.
 
 - Session start / new task: run `mp context` (project pages + recent
   journal). For anything beyond the current repo, `mp search <query>`.
@@ -372,8 +378,145 @@ and other agents — read it for context, write durable knowledge back.
 <!-- MINDPALACE_END -->
 """
 
+# Compact variant for hosts with tight size budgets (Windsurf caps the whole
+# rules file at 6,000 chars; Hermes' SOUL.md is an off-label hook).
+_MP_BLOCK_COMPACT = """
 
-def _init_global(dry: bool) -> None:
+<!-- MINDPALACE_START -->
+mindpalace: global engineering wiki at `~/.mindpalace` (CLI: `mp`), shared
+by all your coding agents. Session start: run `mp context`; beyond this
+repo: `mp search <query>`. After substantial work write durable knowledge
+back: `mp log "<note>"` (dated note), `mp edit <page> <old> <new>`
+(exact-unique diff edit — never rewrite whole pages), `mp write
+topics/<name>.md` (new page). Date claims "(observed YYYY-MM-DD)"; nothing
+durable learned → write nothing. A repo containing `.mindpalace/` is a
+shared team wiki — mp uses it automatically; commit it with your code.
+<!-- MINDPALACE_END -->
+"""
+
+
+def _integrations() -> list[dict]:
+    """Registry of agent-tool integrations for `mp init -g`.
+
+    kinds: plugin        — Claude Code plugin (hooks + skill)
+           block         — append a marker-delimited block to a shared
+                           global instructions file (idempotent: skipped
+                           when MINDPALACE_START is already present, which
+                           also dedupes tools sharing one file, e.g.
+                           gemini + antigravity on ~/.gemini/GEMINI.md)
+           block-compact — same, with the compact block
+           rules         — own mindpalace.md inside the tool's global
+                           rules directory (file is wholly ours)
+           project       — no global mechanism; per-project file via
+                           `mp init --agent <name>`
+    """
+    H = Path.home()
+    copilot_home = Path(os.environ.get("COPILOT_HOME", str(H / ".copilot")))
+    cline_dir = next((d for d in (H / "Documents" / "Cline" / "Rules",
+                                  H / "Cline" / "Rules") if d.is_dir()), None)
+    return [
+        dict(name="claude", kind="plugin", detected=bool(shutil.which("claude")),
+             target=None,
+             note="plugin: session-start injection + stop nudge + mp skill"),
+        dict(name="codex", kind="block", detected=(H / ".codex").is_dir(),
+             target=H / ".codex" / "AGENTS.md", note=""),
+        dict(name="gemini", kind="block", detected=(H / ".gemini").is_dir(),
+             target=H / ".gemini" / "GEMINI.md", note=""),
+        dict(name="antigravity", kind="block",
+             detected=(H / ".gemini" / "antigravity").is_dir(),
+             target=H / ".gemini" / "GEMINI.md",
+             note="reads the same global file as gemini"),
+        dict(name="copilot", kind="block", detected=copilot_home.is_dir(),
+             target=copilot_home / "copilot-instructions.md", note=""),
+        dict(name="windsurf", kind="block-compact",
+             detected=(H / ".codeium" / "windsurf").is_dir(),
+             target=H / ".codeium" / "windsurf" / "memories" / "global_rules.md",
+             note="6,000-char file cap — compact block"),
+        dict(name="pi", kind="block", detected=(H / ".pi").is_dir(),
+             target=H / ".pi" / "agent" / "AGENTS.md", note=""),
+        dict(name="hermes", kind="block-compact",
+             detected=(H / ".hermes").is_dir(),
+             target=H / ".hermes" / "SOUL.md",
+             note="experimental: no official global instructions file"),
+        dict(name="cline", kind="rules", detected=cline_dir is not None,
+             target=(cline_dir or H / "Documents" / "Cline" / "Rules")
+                    / "mindpalace.md",
+             note=""),
+        dict(name="roo", kind="rules", detected=(H / ".roo").is_dir(),
+             target=H / ".roo" / "rules" / "mindpalace.md", note=""),
+        dict(name="kilocode", kind="rules", detected=(H / ".kilocode").is_dir(),
+             target=H / ".kilocode" / "rules" / "mindpalace.md", note=""),
+        dict(name="cursor", kind="project", detected=(H / ".cursor").is_dir(),
+             target=None,
+             note="no global rules file — run `mp init --agent cursor` "
+                  "inside each project"),
+    ]
+
+
+def _install_block(target: Path, block: str, dry: bool) -> str:
+    if target.exists() and "MINDPALACE_START" in target.read_text():
+        return "already integrated"
+    if dry:
+        return f"[dry-run] append mindpalace block to {target}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = target.read_text() if target.exists() else ""
+    target.write_text(existing + block)
+    return f"appended block to {target}"
+
+
+def _install_rules(target: Path, dry: bool) -> str:
+    content = _MP_BLOCK.strip() + "\n"
+    if target.exists() and target.read_text() == content:
+        return "already integrated"
+    if dry:
+        return f"[dry-run] write {target}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    return f"wrote {target}"
+
+
+def _install_claude_plugin(dry: bool) -> str:
+    if not shutil.which("claude"):
+        return "claude CLI not on PATH — install Claude Code first"
+    mkt = str(INSTALL_DIR / "integrations" / "claude")
+    rc, out = _run(["claude", "plugin", "marketplace", "add", mkt], dry)
+    if rc != 0 and "already" in out.lower():
+        _run(["claude", "plugin", "marketplace", "remove", "mindpalace-local"], dry)
+        _run(["claude", "plugin", "marketplace", "add", mkt], dry)
+    rc2, out2 = _run(
+        ["claude", "plugin", "install", "mindpalace@mindpalace-local"], dry)
+    if dry:
+        return "[dry-run] install Claude Code plugin"
+    if rc2 == 0 or "already installed" in out2.lower():
+        return "plugin installed"
+    return f"plugin install failed: {out2[:200]}"
+
+
+def _list_integrations() -> None:
+    print(f"{'agent':<12} {'status':<12} target")
+    print("-" * 72)
+    for it in _integrations():
+        if it["kind"] == "plugin":
+            status = "detected" if it["detected"] else "not found"
+            target = "Claude Code plugin"
+        elif it["kind"] == "project":
+            status = "detected" if it["detected"] else "not found"
+            target = "(project-scoped) " + it["note"]
+        else:
+            t: Path = it["target"]
+            if t.exists() and "MINDPALACE" in t.read_text():
+                status = "integrated"
+            elif it["detected"]:
+                status = "detected"
+            else:
+                status = "not found"
+            target = str(t).replace(str(Path.home()), "~")
+        print(f"{it['name']:<12} {status:<12} {target}")
+        if it["note"] and it["kind"] not in ("project",):
+            print(f"{'':<12} {'':<12}   {it['note']}")
+
+
+def _init_global(dry: bool, agent: str | None = None) -> None:
     print(f"mindpalace install dir: {INSTALL_DIR}")
     print(f"wiki root: {ROOT}\n")
 
@@ -397,50 +540,93 @@ def _init_global(dry: bool) -> None:
         print(f"✓ wiki created at {ROOT} (its own git repo — add a private "
               f"remote for backup/team sync)")
 
-    # 2. Claude Code
-    if shutil.which("claude"):
-        mkt = str(INSTALL_DIR / "integrations" / "claude")
-        rc, out = _run(["claude", "plugin", "marketplace", "add", mkt], dry)
-        if rc != 0 and "already" in out.lower():
-            _run(["claude", "plugin", "marketplace", "remove", "mindpalace-local"], dry)
-            rc, out = _run(["claude", "plugin", "marketplace", "add", mkt], dry)
-        rc2, out2 = _run(
-            ["claude", "plugin", "install", "mindpalace@mindpalace-local"], dry
-        )
-        if dry:
-            pass
-        elif rc2 == 0 or "already installed" in out2.lower():
-            print("✓ Claude Code: plugin installed (session-start context "
-                  "injection + stop nudge + mp skill)")
+    # 2. agent integrations
+    registry = _integrations()
+    names = [it["name"] for it in registry]
+    if agent and agent not in names:
+        _die(f"unknown agent {agent!r} — supported: {', '.join(names)}")
+    hits = 0
+    for it in registry:
+        if agent and it["name"] != agent:
+            continue
+        if not it["detected"] and not agent:
+            print(f"- {it['name']}: not found — skipped")
+            continue
+        if it["kind"] == "plugin":
+            msg = _install_claude_plugin(dry)
+        elif it["kind"] == "project":
+            print(f"- {it['name']}: {it['note']}")
+            continue
+        elif it["kind"] == "rules":
+            msg = _install_rules(it["target"], dry)
         else:
-            print(f"✗ Claude Code plugin failed: {out2[:200]}")
-    else:
-        print("- Claude Code not found (claude CLI not on PATH) — skipped")
-
-    # 3. Codex
-    codex_agents = Path.home() / ".codex" / "AGENTS.md"
-    if (Path.home() / ".codex").exists():
-        if codex_agents.exists() and "MINDPALACE_START" in codex_agents.read_text():
-            print("✓ Codex: AGENTS.md already integrated")
-        elif dry:
-            print(f"  [dry-run] append mindpalace block to {codex_agents}")
-        else:
-            existing = codex_agents.read_text() if codex_agents.exists() else ""
-            codex_agents.parent.mkdir(parents=True, exist_ok=True)
-            codex_agents.write_text(existing + _CODEX_BLOCK)
-            print("✓ Codex: AGENTS.md updated")
-    else:
-        print("- Codex not found (~/.codex missing) — skipped")
+            block = _MP_BLOCK_COMPACT if it["kind"] == "block-compact" else _MP_BLOCK
+            msg = _install_block(it["target"], block, dry)
+        mark = "✗" if "failed" in msg or "not on PATH" in msg else "✓"
+        extra = f" ({it['note']})" if it["note"] else ""
+        print(f"{mark} {it['name']}: {msg}{extra}")
+        hits += 1
+    if agent and hits == 0:
+        _die(f"agent {agent!r} matched nothing")
 
     print("\ndone. next: cd into a project and just start working — agents "
           "will read/write the wiki. Manual: mp context | mp search | mp log")
 
 
+# Project-scoped integration files for tools without a global mechanism
+# (or when a team wants the integration versioned with the repo).
+_CURSOR_FRONTMATTER = """---
+description: mindpalace — global engineering wiki for coding agents
+alwaysApply: true
+---
+"""
+
+_PROJECT_AGENT_FILES = {
+    "cursor": (".cursor/rules/mindpalace.mdc", _CURSOR_FRONTMATTER),
+    "cline": (".clinerules/mindpalace.md", ""),
+    "roo": (".roo/rules/mindpalace.md", ""),
+    "kilocode": (".kilocode/rules/mindpalace.md", ""),
+    "windsurf": (".windsurf/rules/mindpalace.md", ""),
+}
+
+
+def _init_project_agent(agent: str, dry: bool) -> None:
+    if agent not in _PROJECT_AGENT_FILES:
+        _die(f"no project-scoped integration for {agent!r} — supported: "
+             f"{', '.join(sorted(_PROJECT_AGENT_FILES))} "
+             f"(others integrate globally via `mp init -g`)")
+    root = _git_root(Path.cwd()) or _die("not inside a git repo")
+    rel, prefix = _PROJECT_AGENT_FILES[agent]
+    target = root / rel
+    content = prefix + _MP_BLOCK.strip() + "\n"
+    if target.exists() and target.read_text() == content:
+        print(f"✓ {agent}: {rel} already integrated")
+        return
+    if dry:
+        print(f"  [dry-run] write {target}")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    print(f"✓ {agent}: wrote {rel} — commit it with the repo")
+
+
 def cmd_init(args: list[str]) -> None:
     dry = "--dry-run" in args
     args = [a for a in args if a != "--dry-run"]
+    agent = None
+    if "--agent" in args:
+        i = args.index("--agent")
+        if i + 1 >= len(args):
+            _die("usage: mp init [-g] --agent <name>")
+        agent = args[i + 1]
+        del args[i:i + 2]
+    if "--list" in args:
+        _list_integrations()
+        return
     if "-g" in args or "--global" in args:
-        _init_global(dry)
+        _init_global(dry, agent)
+    elif agent:
+        _init_project_agent(agent, dry)
     else:
         _init_project(args)
 

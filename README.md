@@ -22,16 +22,38 @@ curl -fsSL https://raw.githubusercontent.com/rootnix/mindpalace/main/install.sh 
 mp init -g
 ```
 
-`mp init -g` creates your wiki and auto-detects installed agent tools:
+`mp init -g` creates your wiki and auto-detects every installed agent tool:
 
 | Tool | Integration |
 |---|---|
-| **Claude Code** | Plugin (auto): injects project context at session start, nudges write-back at stop (once per session), ships an `mp` usage skill |
-| **Codex** | Appends the mindpalace contract to `~/.codex/AGENTS.md` |
+| **Claude Code** | Plugin (auto): injects project context at session start, nudges write-back at stop, ships an `mp` usage skill |
+| **Codex** | Marker block in `~/.codex/AGENTS.md` |
+| **Gemini CLI** | Marker block in `~/.gemini/GEMINI.md` |
+| **Copilot CLI** | Marker block in `~/.copilot/copilot-instructions.md` |
+| **Antigravity** | Same `~/.gemini/GEMINI.md` block (deduped with Gemini) |
+| **Windsurf** | Compact block in `~/.codeium/windsurf/memories/global_rules.md` (6k cap respected) |
+| **Pi** | Marker block in `~/.pi/agent/AGENTS.md` |
+| **Hermes** | Compact block in `~/.hermes/SOUL.md` (experimental — no official global file) |
+| **Cline** | `~/Documents/Cline/Rules/mindpalace.md` |
+| **Roo Code** | `~/.roo/rules/mindpalace.md` |
+| **Kilo Code** | `~/.kilocode/rules/mindpalace.md` |
+| **Cursor** | Per-project: `mp init --agent cursor` → `.cursor/rules/mindpalace.mdc` (no global rules file exists) |
 | anything with a shell | The `mp` CLI works everywhere |
 
-Re-run `mp init -g` anytime — it's idempotent. `--dry-run` shows what it
-would do.
+```sh
+mp init -g                  # auto-detect + integrate everything installed
+mp init -g --agent codex    # force one tool (creates config dirs if needed)
+mp init --agent cursor      # project-scoped file, versioned with the repo
+mp init --list              # support matrix + current integration status
+```
+
+Project-scoped variants (`--agent cursor|cline|roo|kilocode|windsurf`
+without `-g`) write the rules file into the repo — useful when a team wants
+the integration to arrive via clone instead of per-machine setup.
+
+Re-run `mp init -g` anytime — it's idempotent (marker-block dedupe; tools
+sharing one file, like Gemini and Antigravity, get a single block).
+`--dry-run` shows what it would do.
 
 ## CLI
 
