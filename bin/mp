@@ -31,6 +31,7 @@ Commands:
   mp backfill [--limit N]      extract this project's PRE-mindpalace agent
                                sessions (Claude Code, Codex) into digests +
                                a distillation prompt; --clean removes digests
+  mp star                      star rootnix/mindpalace on GitHub (gh or browser)
   mp upgrade                   update the mindpalace installation (git pull)
 
 Wiki root: ~/.mindpalace (override with MINDPALACE_ROOT).
@@ -571,6 +572,7 @@ def _init_global(dry: bool, agent: str | None = None) -> None:
 
     print("\ndone. next: cd into a project and just start working — agents "
           "will read/write the wiki. Manual: mp context | mp search | mp log")
+    _maybe_ask_star(dry)
 
 
 # Project-scoped integration files for tools without a global mechanism
@@ -608,6 +610,56 @@ def _init_project_agent(agent: str, dry: bool) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content)
     print(f"✓ {agent}: wrote {rel} — commit it with the repo")
+
+
+
+# ── GitHub star (opt-in, asked once) ─────────────────────────────────────────
+
+_REPO = "rootnix/mindpalace"
+
+
+def _do_star() -> None:
+    if shutil.which("gh"):
+        rc, _ = _run(["gh", "api", "-X", "PUT", f"user/starred/{_REPO}"], dry=False)
+        if rc == 0:
+            print("★ starred — thank you!")
+            return
+    url = f"https://github.com/{_REPO}"
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    if shutil.which(opener):
+        subprocess.run([opener, url], check=False)
+        print(f"opened {url} — hit the ★ button. thank you!")
+    else:
+        print(f"star us at {url}")
+
+
+def cmd_star(_args: list[str]) -> None:
+    _do_star()
+
+
+def _maybe_ask_star(dry: bool) -> None:
+    """One-time, interactive-only, never blocks or fails the install."""
+    if dry or os.environ.get("MP_NO_STAR"):
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    marker = ROOT / ".star-asked"
+    if marker.exists():
+        return
+    try:
+        marker.write_text(_today() + "\n")
+    except OSError:
+        return
+    try:
+        ans = input("\n★ Enjoying mindpalace? Star it on GitHub so others "
+                    "find it? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if ans in ("y", "yes"):
+        _do_star()
+    else:
+        print("  no problem — `mp star` anytime.")
 
 
 def cmd_init(args: list[str]) -> None:
@@ -866,6 +918,7 @@ COMMANDS = {
     "log": cmd_log,
     "share": cmd_share,
     "backfill": cmd_backfill,
+    "star": cmd_star,
     "upgrade": cmd_upgrade,
 }
 
