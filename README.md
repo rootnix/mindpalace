@@ -100,8 +100,12 @@ without dates. mindpalace bakes the countermeasures into the tool:
 3. **Durable knowledge only** — decisions, gotchas, constraints, runbooks.
    Not session logs, not what the code already says.
 4. **Journal is an inbox** — recurring themes get distilled into pages.
-5. **Nothing new learned → write nothing** — the stop-nudge accepts "nothing
-   durable" as an answer.
+5. **Commands too, secrets never** — key operational command lines live in
+   the project's `commands.md`, with credentials replaced by `[REDACTED]`
+   plus a pointer to where the real value lives.
+6. **When unsure, log it** — a one-line journal note beats silence; "nothing
+   durable" is still an acceptable answer to the stop-nudge when truly
+   nothing happened.
 
 ## Backfill — import your pre-mindpalace sessions
 

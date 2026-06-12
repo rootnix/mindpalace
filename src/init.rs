@@ -16,9 +16,13 @@ coding agents — read it for context, write durable knowledge back.
   for dated quick notes, `mp edit <page> <old> <new>` for page updates
   (exact-unique string replacement — NEVER rewrite whole pages), and
   `mp write topics/<name>.md` for new cross-project pages.
+- Key operational command lines (deploy, db access, one-off admin) go in
+  the project's commands.md — ALWAYS replace secrets/tokens/passwords with
+  [REDACTED] plus a pointer to where the real value lives.
 - Discipline: diff edits only; date claims \"(observed YYYY-MM-DD)\"; fix
   stale content in place; the journal is an inbox — distill recurring
-  themes into pages; nothing durable learned → write nothing.
+  themes into pages. When unsure if something is durable, a one-line
+  `mp log` beats silence; skip only when truly nothing new happened.
 - If the repo contains `.mindpalace/` (a SHARED team wiki versioned with
   the repo), mp commands use it automatically: top-level pages are
   communal, `journal/<user>.md` is yours. Commit wiki changes with your
@@ -36,9 +40,11 @@ by all your coding agents. Session start: run `mp context`; beyond this
 repo: `mp search <query>`. After substantial work write durable knowledge
 back: `mp log \"<note>\"` (dated note), `mp edit <page> <old> <new>`
 (exact-unique diff edit — never rewrite whole pages), `mp write
-topics/<name>.md` (new page). Date claims \"(observed YYYY-MM-DD)\"; nothing
-durable learned → write nothing. A repo containing `.mindpalace/` is a
-shared team wiki — mp uses it automatically; commit it with your code.
+topics/<name>.md` (new page). Key command lines go in the project's
+commands.md with secrets replaced by [REDACTED]. Date claims \"(observed
+YYYY-MM-DD)\"; when unsure, a one-line `mp log` beats silence. A repo
+containing `.mindpalace/` is a shared team wiki — mp uses it
+automatically; commit it with your code.
 <!-- MINDPALACE_END -->
 ";
 
@@ -174,6 +180,9 @@ pub fn integrations() -> Vec<Integration> {
     ]
 }
 
+const MARK_START: &str = "<!-- MINDPALACE_START -->";
+const MARK_END: &str = "<!-- MINDPALACE_END -->";
+
 fn install_block(target: &std::path::Path, block: &str, dry: bool) -> String {
     // Strict read: this is read-modify-write on a file we don't own — never
     // rewrite a user's AGENTS.md with U+FFFD replacements or truncate it.
@@ -188,7 +197,29 @@ fn install_block(target: &std::path::Path, block: &str, dry: bool) -> String {
     } else {
         String::new()
     };
-    if target.exists() && existing.contains("MINDPALACE_START") {
+    // Existing block: refresh the marker-delimited span in place when the
+    // shipped block text changed, so `mp init -g` after an upgrade keeps
+    // installed instructions current.
+    if let (Some(s_off), Some(e_off)) = (existing.find(MARK_START), existing.find(MARK_END)) {
+        let e_end = e_off + MARK_END.len();
+        let desired = {
+            let bs = block.find(MARK_START).unwrap_or(0);
+            let be = block.find(MARK_END).map(|i| i + MARK_END.len()).unwrap_or(block.len());
+            &block[bs..be]
+        };
+        if s_off < e_end && &existing[s_off..e_end] == desired {
+            return "already integrated".into();
+        }
+        if dry {
+            return format!("[dry-run] refresh mindpalace block in {}", target.display());
+        }
+        if s_off < e_end {
+            let updated = format!("{}{desired}{}", &existing[..s_off], &existing[e_end..]);
+            if std::fs::write(target, updated).is_err() {
+                return format!("failed to write {}", target.display());
+            }
+            return format!("refreshed block in {}", target.display());
+        }
         return "already integrated".into();
     }
     if dry {

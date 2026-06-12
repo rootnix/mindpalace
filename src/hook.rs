@@ -16,7 +16,9 @@ across all agent tools and projects. CLI: mp search <q> | read <page> |
 edit <page> <old> <new> | log <note> | write <page>. Search it when you
 need context beyond this repo. Write durable knowledge back (diff edits
 via 'mp edit'; quick notes via 'mp log') — decisions, gotchas,
-constraints. Never full-page rewrites; date your claims.";
+constraints, and key operational command lines (project commands.md,
+secrets replaced with [REDACTED]). Never full-page rewrites; date your
+claims. When unsure, a one-line 'mp log' beats silence.";
 
 /// SessionStart: inject the current project's wiki context.
 /// Must never fail the hook: outside a git repo there is no project context —
@@ -109,17 +111,30 @@ fn stop() {
         return;
     }
 
-    let window = Duration::from_secs(6 * 3600);
-    let mut recent = recent_md_write(&root(), window);
-    if !recent {
-        // shared in-repo store (mp share): writes land in <repo>/.mindpalace
-        if let Some(top) = git_root(&cwd) {
-            let store = top.join(".mindpalace");
-            if store.is_dir() {
-                recent = recent_md_write(&store, window);
-            }
+    // Project-scoped recency: a write to ANOTHER project's pages must not
+    // suppress this project's nudge (the old whole-wiki 6h scan made the
+    // nudge nearly never fire). topics/ counts — cross-project knowledge
+    // written this session is wiki activity too.
+    let window = Duration::from_secs(2 * 3600);
+    let mut scan: Vec<std::path::PathBuf> = vec![root().join("topics")];
+    if let Some(top) = git_root(&cwd) {
+        let store = top.join(".mindpalace");
+        if store.is_dir() {
+            scan.push(store);
         }
+        let slug_marker = top.join(".mindpalace-project");
+        let slug = std::fs::read_to_string(&slug_marker)
+            .map(|s| s.trim().to_string())
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| top.file_name().map(|n| n.to_string_lossy().into_owned()));
+        if let Some(slug) = slug {
+            scan.push(root().join("projects").join(slug));
+        }
+    } else {
+        scan.push(root());
     }
+    let recent = scan.iter().any(|d| recent_md_write(d, window));
     let _ = std::fs::write(&marker, "");
     if recent {
         return;
@@ -127,8 +142,10 @@ fn stop() {
     let reason = "mindpalace check (once per session): this session changed files but \
 wrote nothing to the global wiki. If you learned something DURABLE — \
 a decision, gotcha, constraint, or cross-project fact — record it \
-now (`mp log \"<note>\"` for quick notes, `mp edit` for page \
-updates). If nothing durable was learned, just finish your reply; \
+now (`mp log \"<note>\"` for quick notes, `mp edit` for page updates, \
+key command lines with secrets [REDACTED] -> the project's commands.md). \
+When unsure, a one-line log beats silence. If truly nothing was \
+learned, just finish your reply; \
 you will not be asked again this session.";
     println!("{}", json!({ "decision": "block", "reason": reason }));
 }

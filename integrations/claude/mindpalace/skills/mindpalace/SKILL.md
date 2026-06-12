@@ -48,7 +48,11 @@ what the code already says.
 - Date claims inline: `(observed 2026-06-12)`.
 - Found something stale? Fix it in place immediately.
 - New cross-project theme → new `topics/<name>.md` + add a line to `index.md`.
-- Nothing durable learned → write nothing.
+- Key operational command lines (deploy, db access, one-off admin) go in
+  the project's `commands.md` — ALWAYS replace secrets/tokens/passwords
+  with `[REDACTED]` plus a pointer to where the real value lives.
+- When unsure whether something is durable, a one-line `mp log` beats
+  silence; write nothing only when truly nothing new happened.
 
 ## Shared in-repo store (`mp share`)
 If the repo contains `.mindpalace/`, the project's wiki is SHARED — versioned
