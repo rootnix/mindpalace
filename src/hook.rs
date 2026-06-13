@@ -4,7 +4,7 @@
 //! Windows too: the plugin's hooks.json simply runs `mp hook session-start`
 //! and `mp hook stop`.
 
-use crate::paths::{git_root, root};
+use crate::paths::git_root;
 use crate::util::die;
 use serde_json::{json, Value};
 use std::io::Read;
@@ -39,34 +39,39 @@ fn session_start() {
     println!("</mindpalace-context>");
 }
 
-fn recent_md_write(dir: &Path, window: Duration) -> bool {
-    let now = SystemTime::now();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        if d.file_name().is_some_and(|n| n == ".git") {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&d) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "md") {
-                if let Ok(modified) = p.metadata().and_then(|m| m.modified()) {
-                    if now.duration_since(modified).unwrap_or(Duration::MAX) < window {
-                        return true;
-                    }
-                }
-            }
-        }
+/// True if HEAD was committed within `window`. A repo that commits often
+/// (e.g. many small commits per session) is usually clean at Stop time, so a
+/// bare `git status` dirty check would never nudge it — a recent commit is
+/// just as much "work this session changed" as an uncommitted edit.
+fn committed_within(cwd: &Path, window: Duration) -> bool {
+    let out = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ct"])
+        .current_dir(cwd)
+        .output();
+    let Ok(out) = out else { return false };
+    if !out.status.success() {
+        return false;
     }
-    false
+    let Ok(ts) = String::from_utf8_lossy(&out.stdout).trim().parse::<u64>() else {
+        return false;
+    };
+    let commit = SystemTime::UNIX_EPOCH + Duration::from_secs(ts);
+    SystemTime::now()
+        .duration_since(commit)
+        .map(|d| d < window)
+        .unwrap_or(false)
 }
 
-/// Stop: once per session, if the repo has uncommitted changes and the wiki
-/// was never touched, nudge the agent to record durable knowledge.
+/// Stop: every time a coding turn ends, if this session touched code, nudge
+/// the agent to capture what a teammate would need. The agent — not this
+/// hook — decides whether anything durable was learned; an empty turn just
+/// finishes. No once-per-session marker, no recency window: the cost of a
+/// redundant nudge is one self-check the agent absorbs, the cost of a missed
+/// one is a teammate left without context. We bias toward capture.
+///
+/// `stop_hook_active` is the only loop guard: after we block, the agent's
+/// follow-up Stop carries that flag and we return immediately, so the nudge
+/// fires at most once per agent turn, not in a loop.
 fn stop() {
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
@@ -82,11 +87,6 @@ fn stop() {
     {
         return;
     }
-    let sid = data
-        .get("session_id")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
     let cwd: std::path::PathBuf = data
         .get("cwd")
         .and_then(Value::as_str)
@@ -94,59 +94,27 @@ fn stop() {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| ".".into());
 
-    let marker_dir = root().join(".nudged");
-    let _ = std::fs::create_dir_all(&marker_dir);
-    let marker = marker_dir.join(&sid);
-    if marker.exists() {
-        return;
-    }
-
+    // "Did this session do code work?" = uncommitted changes OR a commit
+    // within the window. The commit clause is what keeps commit-often repos
+    // from silently slipping past the nudge.
+    let window = Duration::from_secs(2 * 3600);
     let dirty = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(&cwd)
         .output()
         .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
         .unwrap_or(false);
-    if !dirty {
+    if !dirty && !committed_within(&cwd, window) {
         return;
     }
 
-    // Project-scoped recency: a write to ANOTHER project's pages must not
-    // suppress this project's nudge (the old whole-wiki 6h scan made the
-    // nudge nearly never fire). topics/ counts — cross-project knowledge
-    // written this session is wiki activity too.
-    let window = Duration::from_secs(2 * 3600);
-    let mut scan: Vec<std::path::PathBuf> = vec![root().join("topics")];
-    if let Some(top) = git_root(&cwd) {
-        let store = top.join(".mindpalace");
-        if store.is_dir() {
-            scan.push(store);
-        }
-        let slug_marker = top.join(".mindpalace-project");
-        let slug = std::fs::read_to_string(&slug_marker)
-            .map(|s| s.trim().to_string())
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| top.file_name().map(|n| n.to_string_lossy().into_owned()));
-        if let Some(slug) = slug {
-            scan.push(root().join("projects").join(slug));
-        }
-    } else {
-        scan.push(root());
-    }
-    let recent = scan.iter().any(|d| recent_md_write(d, window));
-    let _ = std::fs::write(&marker, "");
-    if recent {
-        return;
-    }
-    let reason = "mindpalace check (once per session): this session changed files but \
-wrote nothing to the global wiki. If you learned something DURABLE — \
-a decision, gotcha, constraint, or cross-project fact — record it \
-now (`mp log \"<note>\"` for quick notes, `mp edit` for page updates, \
-key command lines with secrets [REDACTED] -> the project's commands.md). \
-When unsure, a one-line log beats silence. If truly nothing was \
-learned, just finish your reply; \
-you will not be asked again this session.";
+    let reason = "mindpalace: this session changed code. Capture what a teammate \
+inheriting this repo would need — a decision and its why, a gotcha, a \
+constraint, a key command line — by appending to the EXISTING pages with \
+`mp edit <page> <old> <new>` (diff-style, never a full rewrite) plus a dated \
+one-line `mp log \"<note>\"`. Put operational commands in the project's \
+commands.md with secrets as [REDACTED]. If everything durable from this \
+turn is already recorded, just finish your reply — don't invent filler.";
     println!("{}", json!({ "decision": "block", "reason": reason }));
 }
 
