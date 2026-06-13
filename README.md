@@ -1,5 +1,7 @@
 # mindpalace
 
+![mindpalace](readme.png)
+
 A global engineering wiki for AI coding agents — everything your agents
 learn, everywhere, all in one place.
 
